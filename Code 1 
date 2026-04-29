@@ -1,0 +1,56 @@
+#include "VirtualMemory.h"
+#include <algorithm>
+
+VirtualMemory::VirtualMemory(int tlbSize, int pageCount) : tlbSize(tlbSize), currentTime(0) {
+    tlb.reserve(tlbSize);
+}
+
+bool VirtualMemory::lookupTLB(int pid, int virtualAddress, int& physicalAddress) {
+    int pageNumber = (virtualAddress >> 12);
+    for (auto& entry : tlb) {
+        if (entry.pid == pid && entry.pageNumber == pageNumber) {
+            entry.lastUsed = ++currentTime; // Update LRU timestamp
+            physicalAddress = (entry.frameNumber << 12) | (virtualAddress & 0xFFF);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool VirtualMemory::translateAddress(int pid, int virtualAddress, int& physicalAddress) {
+    // 1. Check TLB
+    if (lookupTLB(pid, virtualAddress, physicalAddress)) return true;
+
+    // Perform Two-Level Page Table Lookup
+    int outer = (virtualAddress >> 22) & 0x3FF;
+    int inner = (virtualAddress >> 12) & 0x3FF;
+    int offset = virtualAddress & 0xFFF;
+
+    if (outerPageTable.find({pid, outer}) == outerPageTable.end()) return false;
+    int innerTableID = outerPageTable[{pid, outer}];
+    
+    // Using pair to simulate inner page table lookup
+    if (innerPageTable.find({pid, inner}) == innerPageTable.end()) return false;
+
+    int frameNumber = innerPageTable[{pid, inner}];
+    physicalAddress = (frameNumber << 12) | offset;
+
+    // Update TLB
+    insertTLB(pid, (virtualAddress >> 12), frameNumber);
+    return true;
+}
+
+void VirtualMemory::insertTLB(int pid, int pageNumber, int frameNumber) {
+    if (tlb.size() < (size_t)tlbSize) {
+        tlb.push_back({pid, pageNumber, frameNumber, ++currentTime});
+    } else {
+    
+        auto minEntry = std::min_element(tlb.begin(), tlb.end(), [](const TLBEntry& a, const TLBEntry& b) {
+            return a.lastUsed < b.lastUsed;
+        });
+        minEntry->pid = pid;
+        minEntry->pageNumber = pageNumber;
+        minEntry->frameNumber = frameNumber;
+        minEntry->lastUsed = ++currentTime;
+    }
+}
